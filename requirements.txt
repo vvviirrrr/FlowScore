@@ -1,0 +1,66 @@
+from flask import Flask, render_template, request, jsonify
+import joblib
+import pandas as pd
+import numpy as np
+import os
+
+app = Flask(__name__)
+
+BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
+MODELS_DIR = os.path.join(BASE_DIR, 'models')
+
+# Load artifacts
+model  = joblib.load(os.path.join(MODELS_DIR, 'xgb.pkl'))
+scaler = joblib.load(os.path.join(MODELS_DIR, 'scaler.pkl'))
+
+# The exact feature names used during training in src/preprocessing.py
+FEATURE_NAMES = ["transaction_consistency", "merchant_diversity", "income_stability", "savings_score", "temporal_score"]
+
+@app.route("/")
+def home():
+    return render_template("dashboard.html")
+
+@app.route("/predict", methods=["POST"])
+def predict():
+    try:
+        data = request.json
+
+        # 1. Feature Engineering (Derived from raw inputs)
+        eng_data = {
+            "transaction_consistency": float(data.get("avg_weekly_transactions", 0)) / 50,
+            "merchant_diversity":      float(data.get("unique_merchants", 0)) / 20,
+            "income_stability":        1 - float(data.get("income_volatility", 0)),
+            "savings_score":           float(data.get("savings_ratio", 0)),
+            "temporal_score":          float(data.get("bill_payment_timing", 0))
+        }
+
+        # 2. Convert to DataFrame to preserve feature names throughout
+        X_raw = pd.DataFrame([eng_data], columns=FEATURE_NAMES)
+
+        # 3. Scale — keep as DataFrame to avoid SHAP/scaler warnings
+        X_scaled = pd.DataFrame(scaler.transform(X_raw), columns=FEATURE_NAMES)
+
+        # 4. Predict
+        prob = float(model.predict_proba(X_scaled)[0][1])
+
+        # 5. Score Mapping (300-900)
+        score    = 300 + (prob * 600)
+        decision = "Creditworthy" if score >= 600 else "High Risk"
+
+        return jsonify({
+            "vendor_name": data.get("vendor_name", "Vendor"),
+            "flowscore":   round(score, 2),
+            "decision":    decision,
+            "metrics": {
+                "Stability":   round(eng_data["income_stability"]        * 100, 1),
+                "Consistency": round(eng_data["transaction_consistency"] * 100, 1),
+                "Discipline":  round(eng_data["temporal_score"]          * 100, 1)
+            }
+        })
+
+    except Exception as e:
+        print(f"Error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+if __name__ == "__main__":
+    app.run(debug=True)
