@@ -1,6 +1,5 @@
 # FlowScore
-
-[short description of what it does]
+An explainable machine-learning credit scoring setup that tries to judge creditworthiness using behavioral signals pulled from UPI transaction patterns, not the usual statements and paperwork.
 
 ## How to Run
 1. pip install -r requirements.txt
